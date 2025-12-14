@@ -100,6 +100,176 @@ def save_block_image(
         return None
 
 
+def estimate_block_order_for_null_blocks(parsing_res_list: List[Dict]) -> List[Dict]:
+    """
+    같은 페이지 내에서 block_order가 null인 모든 블록의 block_order를 추정
+    block_label에 관계없이 block_order가 null인 모든 블록을 처리
+    block_order가 있는 블록들 사이에 여러 null 블록이 있으면 y 좌표 순서대로 균등하게 배치
+    
+    Args:
+        parsing_res_list: 블록 리스트
+    
+    Returns:
+        block_order가 추정된 블록 리스트
+    """
+    # 같은 페이지 내에서 pdf_bbox y 좌표로 정렬
+    sorted_blocks = sorted(
+        parsing_res_list,
+        key=lambda b: (
+            b.get('pdf_bbox', [0, 999999])[1] if len(b.get('pdf_bbox', [])) >= 2 else 999999
+        )
+    )
+    
+    # block_order가 있는 블록들 찾기
+    ordered_blocks = [
+        (i, block) for i, block in enumerate(sorted_blocks)
+        if block.get('block_order') is not None
+    ]
+    
+    updated_list = parsing_res_list.copy()
+    block_to_index = {id(block): i for i, block in enumerate(parsing_res_list)}
+    
+    # block_order가 있는 블록이 없는 경우: block_id 순서대로 1, 2, 3... 으로 배치
+    if not ordered_blocks:
+        logger.debug("block_order가 있는 블록이 없습니다. block_id 순서대로 추정합니다.")
+        null_blocks = [
+            (i, block) for i, block in enumerate(sorted_blocks)
+            if block.get('block_order') is None
+        ]
+        
+        if null_blocks:
+            # block_id 순서대로 정렬
+            null_blocks.sort(key=lambda x: x[1].get('block_id', 0))
+            
+            for k, (j, null_block) in enumerate(null_blocks):
+                estimated_order = k + 1  # 1부터 시작
+                original_idx = block_to_index.get(id(null_block))
+                if original_idx is not None:
+                    updated_list[original_idx]['block_order'] = estimated_order
+                    logger.debug(f"block_order 추정 (ordered 블록 없음): {null_block.get('block_label')} "
+                               f"(block_id={null_block.get('block_id')}, block_idx={original_idx}) -> {estimated_order}")
+        
+        return updated_list
+    
+    
+    # ordered 블록들 사이의 구간을 찾아서 null 블록들을 배치
+    for i in range(len(ordered_blocks) - 1):
+        prev_idx, prev_block = ordered_blocks[i]
+        next_idx, next_block = ordered_blocks[i + 1]
+        
+        prev_order = prev_block.get('block_order')
+        next_order = next_block.get('block_order')
+        prev_y = prev_block.get('pdf_bbox', [0, 0])[1] if len(prev_block.get('pdf_bbox', [])) >= 2 else 0
+        next_y = next_block.get('pdf_bbox', [0, 0])[1] if len(next_block.get('pdf_bbox', [])) >= 2 else 0
+        
+        # 두 ordered 블록 사이에 있는 null 블록들 찾기 (block_label 무관)
+        null_blocks_in_range = []
+        for j in range(prev_idx + 1, next_idx):
+            block = sorted_blocks[j]
+            
+            # block_order가 null인 모든 블록 처리 (block_label 체크 제거)
+            if block.get('block_order') is None:
+                block_y = block.get('pdf_bbox', [0, 0])[1] if len(block.get('pdf_bbox', [])) >= 2 else 0
+                if prev_y < block_y < next_y:
+                    null_blocks_in_range.append((j, block, block_y))
+        
+        # y 좌표 순서대로 정렬
+        null_blocks_in_range.sort(key=lambda x: x[2])
+        
+        # null 블록들을 균등하게 배치
+        if null_blocks_in_range:
+            # 구간 길이 계산
+            order_range = next_order - prev_order
+            # null 블록 개수 + 1로 나눠서 간격 계산
+            step = order_range / (len(null_blocks_in_range) + 1)
+            
+            for k, (j, null_block, _) in enumerate(null_blocks_in_range):
+                estimated_order = prev_order + step * (k + 1)
+                
+                # 원본 리스트에서 인덱스 찾기
+                original_idx = block_to_index.get(id(null_block))
+                if original_idx is not None:
+                    updated_list[original_idx]['block_order'] = estimated_order
+                    logger.debug(f"block_order 추정: {null_block.get('block_label')} "
+                               f"(block_idx={original_idx}) -> {estimated_order:.2f} "
+                               f"(구간: {prev_order} ~ {next_order}, {len(null_blocks_in_range)}개 블록)")
+    
+    # 첫 번째 ordered 블록보다 위에 있는 null 블록들 처리
+    first_idx, first_block = ordered_blocks[0]
+    first_order = first_block.get('block_order')
+    first_y = first_block.get('pdf_bbox', [0, 0])[1] if len(first_block.get('pdf_bbox', [])) >= 2 else 0
+    
+    null_blocks_before = []
+    for j in range(first_idx):
+        block = sorted_blocks[j]
+        # block_order가 null인 모든 블록 처리 (block_label 체크 제거)
+        if block.get('block_order') is None:
+            block_y = block.get('pdf_bbox', [0, 0])[1] if len(block.get('pdf_bbox', [])) >= 2 else 0
+            if block_y < first_y:
+                null_blocks_before.append((j, block, block_y))
+    
+    null_blocks_before.sort(key=lambda x: x[2])
+    if null_blocks_before:
+        step = 0.1  # 첫 번째 블록보다 위면 0.1 간격으로 배치
+        for k, (j, null_block, _) in enumerate(null_blocks_before):
+            estimated_order = first_order - step * (len(null_blocks_before) - k)
+            original_idx = block_to_index.get(id(null_block))
+            if original_idx is not None:
+                updated_list[original_idx]['block_order'] = estimated_order
+                logger.debug(f"block_order 추정 (첫 블록 위): {null_block.get('block_label')} "
+                           f"(block_idx={original_idx}) -> {estimated_order:.2f}")
+    
+    # 마지막 ordered 블록보다 아래에 있는 null 블록들 처리
+    last_idx, last_block = ordered_blocks[-1]
+    last_order = last_block.get('block_order')
+    last_y = last_block.get('pdf_bbox', [0, 0])[1] if len(last_block.get('pdf_bbox', [])) >= 2 else 0
+    
+    null_blocks_after = []
+    for j in range(last_idx + 1, len(sorted_blocks)):
+        block = sorted_blocks[j]
+        # block_order가 null인 모든 블록 처리 (block_label 체크 제거)
+        if block.get('block_order') is None:
+            block_y = block.get('pdf_bbox', [0, 0])[1] if len(block.get('pdf_bbox', [])) >= 2 else 0
+            if block_y > last_y:
+                null_blocks_after.append((j, block, block_y))
+    
+    null_blocks_after.sort(key=lambda x: x[2])
+    if null_blocks_after:
+        step = 0.1  # 마지막 블록보다 아래면 0.1 간격으로 배치
+        for k, (j, null_block, _) in enumerate(null_blocks_after):
+            estimated_order = last_order + step * (k + 1)
+            original_idx = block_to_index.get(id(null_block))
+            if original_idx is not None:
+                updated_list[original_idx]['block_order'] = estimated_order
+                logger.debug(f"block_order 추정 (마지막 블록 아래): {null_block.get('block_label')} "
+                           f"(block_idx={original_idx}) -> {estimated_order:.2f}")
+    
+    # 처리되지 않은 null 블록들 확인 (fallback: block_id 순서대로 배치)
+    remaining_null_blocks = []
+    for i, block in enumerate(updated_list):
+        if block.get('block_order') is None:
+            remaining_null_blocks.append((i, block))
+    
+    if remaining_null_blocks:
+        logger.debug(f"처리되지 않은 null 블록 {len(remaining_null_blocks)}개 발견. block_id 순서대로 배치합니다.")
+        # block_id 순서대로 정렬
+        remaining_null_blocks.sort(key=lambda x: x[1].get('block_id', 0))
+        
+        # 가장 큰 block_order 찾기 (또는 0)
+        max_order = max(
+            (b.get('block_order') for b in updated_list if b.get('block_order') is not None),
+            default=0
+        )
+        
+        for k, (original_idx, null_block) in enumerate(remaining_null_blocks):
+            estimated_order = max_order + k + 1
+            updated_list[original_idx]['block_order'] = estimated_order
+            logger.debug(f"block_order 추정 (fallback): {null_block.get('block_label')} "
+                       f"(block_id={null_block.get('block_id')}, block_idx={original_idx}) -> {estimated_order}")
+    
+    return updated_list
+
+
 def extract_vlm_block_images(
     json_path: Path,
     pdf_pages_dir: Path,
@@ -107,6 +277,7 @@ def extract_vlm_block_images(
 ) -> Dict:
     """
     JSON 파일의 VLM 처리 대상 블록들(table, chart, figure)의 이미지를 추출하여 vlm_images 폴더에 저장
+    block_order가 null인 VLM 블록의 block_order를 추정하여 채움
     
     Args:
         json_path: 레이아웃 파싱 결과 JSON 파일 경로
@@ -122,6 +293,10 @@ def extract_vlm_block_images(
     
     page_index = data.get("page_index", 0)
     parsing_res_list = data.get("parsing_res_list", [])
+    
+    # block_order 추정 (block_order가 null인 모든 블록 처리)
+    parsing_res_list = estimate_block_order_for_null_blocks(parsing_res_list)
+    data["parsing_res_list"] = parsing_res_list
     
     # PDF 파일 경로 찾기
     pdf_filename = f"page_{page_index+1:04d}.pdf"

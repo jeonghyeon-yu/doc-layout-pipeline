@@ -20,7 +20,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 설정
-INPUT_PATH = "test.pdf"  # PDF 파일 경로
+INPUT_PATH = "page_0026.pdf"  # PDF 파일 경로
 OUT_DIR = Path("output")
 OUT_DIR.mkdir(exist_ok=True)
 

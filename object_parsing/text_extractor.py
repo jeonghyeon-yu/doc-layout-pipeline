@@ -19,6 +19,70 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _remove_duplicate_chars(chars: List[Dict]) -> List[Dict]:
+    """
+    중복 문자 제거 (overprint/중복 렌더링 대응)
+    
+    같은 줄에서 거의 같은 위치에 같은 문자가 있으면 하나만 남기기
+    """
+    if not chars:
+        return []
+    
+    # y 좌표로 그룹화 (같은 줄)
+    y_tolerance = 3.0
+    y_groups = {}
+    for char in chars:
+        y_rounded = round(char["y0"] / y_tolerance) * y_tolerance
+        if y_rounded not in y_groups:
+            y_groups[y_rounded] = []
+        y_groups[y_rounded].append(char)
+    
+    # 각 줄에서 중복 제거
+    result = []
+    for y_key, line_chars in y_groups.items():
+        # x 좌표로 정렬
+        line_chars.sort(key=lambda c: c["x0"])
+        
+        # 중복 제거: 거리가 1~2 포인트 이내이고 같은 문자면 하나만 남기기
+        filtered = []
+        for char in line_chars:
+            is_duplicate = False
+            for existing in filtered:
+                # 중심점 거리 계산
+                dist = ((char["center_x"] - existing["center_x"]) ** 2 + 
+                       (char["center_y"] - existing["center_y"]) ** 2) ** 0.5
+                
+                if dist < 2.0 and char["char"] == existing["char"]:
+                    is_duplicate = True
+                    break
+            
+            if not is_duplicate:
+                filtered.append(char)
+        
+        result.extend(filtered)
+    
+    return result
+
+
+def _apply_punctuation_rules(text: str) -> str:
+    """
+    구두점/괄호 붙임 규칙 적용
+    
+    - 여는 괄호 ( 는 뒤 단어에 붙이기: 조( → 조(
+    - 닫는 괄호 ) 는 앞 단어에 붙이기: 손해 ) → 손해)
+    - 쉼표, 마침표도 앞 단어에 붙이기
+    """
+    # 공백 제거 후 다시 붙이기
+    # 여는 괄호: 앞 공백 제거
+    text = re.sub(r'\s+\(', '(', text)
+    # 닫는 괄호: 뒤 공백 제거
+    text = re.sub(r'\)\s+', ')', text)
+    # 쉼표, 마침표: 앞 공백 제거
+    text = re.sub(r'\s+([,\.])', r'\1', text)
+    
+    return text
+
+
 def extract_text_from_pdf_bbox(pdf_path: Path, pdf_bbox: List[float], page_index: int = 0) -> str:
     """
     PDF에서 지정된 bbox 영역의 텍스트를 추출
@@ -46,13 +110,117 @@ def extract_text_from_pdf_bbox(pdf_path: Path, pdf_bbox: List[float], page_index
         # PyMuPDF는 왼쪽 상단이 원점이므로 그대로 사용
         rect = fitz.Rect(x1, y1, x2, y2)
         
-        # 해당 영역의 텍스트 추출
-        text = page.get_text("text", clip=rect)
+        # dict 형식으로 텍스트 블록 추출 (좌표 정보 포함)
+        text_dict = page.get_text("dict", clip=rect)
         
         doc.close()
         
+        # 문자(char) 단위로 추출
+        chars = []
+        for block in text_dict.get("blocks", []):
+            if "lines" not in block:
+                continue
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    text = span.get("text", "")
+                    bbox = span.get("bbox", [0, 0, 0, 0])
+                    if len(bbox) < 4 or not text:
+                        continue
+                    
+                    span_x0, span_y0, span_x1, span_y1 = bbox[0], bbox[1], bbox[2], bbox[3]
+                    span_width = span_x1 - span_x0
+                    
+                    # span의 텍스트를 문자 단위로 분해
+                    # 각 문자의 위치를 span 내에서 추정
+                    char_width = span_width / len(text) if len(text) > 0 else 0
+                    
+                    for i, char in enumerate(text):
+                        # 각 문자의 x 좌표 추정 (span 내에서 균등 분배)
+                        char_x0 = span_x0 + (i * char_width)
+                        char_x1 = span_x0 + ((i + 1) * char_width)
+                        char_y0 = span_y0
+                        char_y1 = span_y1
+                        
+                        chars.append({
+                            "char": char,
+                            "x0": char_x0,
+                            "y0": char_y0,
+                            "x1": char_x1,
+                            "y1": char_y1,
+                            "center_x": (char_x0 + char_x1) / 2,
+                            "center_y": (char_y0 + char_y1) / 2
+                        })
+        
+        if not chars:
+            return ""
+        
+        # 중복 문자 제거 (overprint 대응)
+        # 같은 줄에서 거의 같은 위치에 같은 문자가 있으면 하나만 남기기
+        chars = _remove_duplicate_chars(chars)
+        
+        # y 좌표로 줄 클러스터링
+        line_tolerance = 3.0  # 3 포인트 이내면 같은 줄
+        lines = []
+        for char in chars:
+            y0 = char["y0"]
+            found_line = False
+            for line in lines:
+                line_avg_y = line["avg_y"]
+                if abs(line_avg_y - y0) <= line_tolerance:
+                    line["chars"].append(char)
+                    # 평균 y 좌표 업데이트
+                    line["avg_y"] = sum(c["y0"] for c in line["chars"]) / len(line["chars"])
+                    found_line = True
+                    break
+            
+            if not found_line:
+                lines.append({
+                    "avg_y": y0,
+                    "chars": [char]
+                })
+        
+        # 각 줄 내에서 x 좌표로 정렬
+        for line in lines:
+            line["chars"].sort(key=lambda c: c["x0"])
+        
+        # 줄을 y 좌표 순으로 정렬
+        lines.sort(key=lambda line: line["avg_y"])
+        
+        # 줄별로 텍스트 합치기
+        line_texts = []
+        for line in lines:
+            line_chars = line["chars"]
+            if not line_chars:
+                continue
+            
+            # 문자들을 합치되, 거리를 고려하여 공백 추가
+            line_parts = []
+            for i, char in enumerate(line_chars):
+                line_parts.append(char["char"])
+                
+                # 다음 문자가 있으면 거리 계산
+                if i < len(line_chars) - 1:
+                    next_char = line_chars[i + 1]
+                    gap = next_char["x0"] - char["x1"]
+                    
+                    # 거리가 일정 이상이면 공백 추가
+                    if gap > 2.0:
+                        line_parts.append(" ")
+            
+            line_text = "".join(line_parts)
+            line_texts.append(line_text)
+        
+        # 줄들을 공백으로 합치기
+        text = " ".join(line_texts)
+        
+        # 구두점/괄호 붙임 규칙 적용
+        text = _apply_punctuation_rules(text)
+        
         # 줄바꿈 문자를 공백으로 치환 후 앞뒤 공백 제거
         text = text.replace('\n', ' ').strip()
+        
+        # 이스케이프된 따옴표 제거
+        text = text.replace('\\"', '')
         
         # 연속된 공백을 하나로 정리
         text = re.sub(r'\s+', ' ', text)
@@ -83,12 +251,6 @@ def extract_texts_from_pdf_bboxes(
         return []
     
     try:
-        doc = fitz.open(str(pdf_path))
-        if page_index >= len(doc):
-            doc.close()
-            return [""] * len(pdf_bboxes)
-        
-        page = doc[page_index]
         texts = []
         
         for pdf_bbox in pdf_bboxes:
@@ -96,17 +258,9 @@ def extract_texts_from_pdf_bboxes(
                 texts.append("")
                 continue
             
-            x1, y1, x2, y2 = pdf_bbox
-            rect = fitz.Rect(x1, y1, x2, y2)
-            text = page.get_text("text", clip=rect)
-            
-            # 줄바꿈 문자를 공백으로 치환 후 앞뒤 공백 제거
-            text = text.replace('\n', ' ').strip()
-            # 연속된 공백을 하나로 정리
-            text = re.sub(r'\s+', ' ', text)
+            # extract_text_from_pdf_bbox를 재사용 (코드 중복 방지)
+            text = extract_text_from_pdf_bbox(pdf_path, pdf_bbox, page_index)
             texts.append(text)
-        
-        doc.close()
         return texts
     except Exception as e:
         logger.error(f"텍스트 추출 실패 ({pdf_path}, page {page_index}): {e}", exc_info=True)
@@ -144,7 +298,7 @@ def process_text_blocks_in_json(
         return data
     
     # 텍스트 블록 라벨
-    text_block_labels = ["paragraph_title", "text", "figure_title", "header", "footer"]
+    text_block_labels = ["doc_title", "paragraph_title", "text", "figure_title", "header", "footer", 'vision_footnote', 'number']
     
     # 텍스트 블록만 필터링 및 인덱스 저장
     text_block_indices = []
@@ -279,105 +433,3 @@ def process_all_json_files(
     logger.info(f"텍스트 추출 완료: {len(processed_files)}개 파일 처리")
     
     return processed_files
-
-
-if __name__ == "__main__":
-    # 테스트 실행 - 전체 파일 처리
-    from pathlib import Path
-    
-    # 테스트 경로 설정
-    base_dir = Path("output/test/layout_parsing_output")
-    parsing_results_dir = base_dir / "parsing_results"
-    pdf_pages_dir = base_dir / "pdf_pages"
-    
-    # 모든 JSON 파일 찾기
-    json_files = sorted(parsing_results_dir.glob("*_res.json"))
-    
-    if not json_files:
-        print(f"[ERROR] JSON 파일을 찾을 수 없습니다: {parsing_results_dir}")
-    else:
-        print(f"[TEST] 전체 {len(json_files)}개 JSON 파일 처리 시작...")
-        print("=" * 60)
-        
-        total_processed_blocks = 0
-        total_text_blocks = 0
-        
-        for file_idx, json_file in enumerate(json_files, 1):
-            print(f"\n[{file_idx}/{len(json_files)}] Processing {json_file.name}...")
-            print("-" * 60)
-            
-            # JSON 파일 읽기
-            with open(json_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            page_index = data.get("page_index", 0)
-            parsing_res_list = data.get("parsing_res_list", [])
-            
-            # PDF 파일 경로
-            pdf_filename = f"page_{page_index+1:04d}.pdf"
-            pdf_path = pdf_pages_dir / pdf_filename
-            
-            if not pdf_path.exists():
-                print(f"  [SKIP] PDF 파일을 찾을 수 없습니다: {pdf_path}")
-                continue
-            
-            # 텍스트 블록만 필터링
-            text_block_labels = ["paragraph_title", "text", "figure_title", "header", "footer"]
-            text_blocks = [b for b in parsing_res_list if b.get("block_label") in text_block_labels]
-            
-            print(f"  Page Index: {page_index}")
-            print(f"  Total Blocks: {len(parsing_res_list)}")
-            print(f"  Text Blocks: {len(text_blocks)}")
-            
-            # 모든 텍스트 블록 처리
-            processed_count = 0
-            for i, block in enumerate(text_blocks, 1):
-                block_label = block.get("block_label", "")
-                pdf_bbox = block.get("pdf_bbox", [])
-                block_order = block.get("block_order", 0)
-                
-                if pdf_bbox and len(pdf_bbox) == 4:
-                    # 분할된 PDF는 각각 1페이지이므로 항상 0번 페이지를 읽어야 함
-                    text = extract_text_from_pdf_bbox(pdf_path, pdf_bbox, page_index=0)
-                    block["block_content"] = text  # 실제로 업데이트
-                    processed_count += 1
-                    
-                    # 처음 3개 블록만 상세 출력
-                    if i <= 3:
-                        if text:
-                            display_text = text[:100] if len(text) > 100 else text
-                            print(f"    [{i}] {block_label} (order:{block_order}): {repr(display_text)}")
-                            if len(text) > 100:
-                                print(f"        ... (total {len(text)} chars)")
-                        else:
-                            print(f"    [{i}] {block_label} (order:{block_order}): [EMPTY]")
-            
-            total_processed_blocks += processed_count
-            total_text_blocks += len(text_blocks)
-            
-            print(f"  Processed: {processed_count}/{len(text_blocks)} blocks")
-            
-            # 결과를 JSON 파일에 저장
-            output_data = {
-                "input_path": data.get("input_path"),
-                "page_index": page_index,
-                "page_count": data.get("page_count"),
-                "image_width": data.get("image_width"),
-                "image_height": data.get("image_height"),
-                "pdf_width": data.get("pdf_width"),
-                "pdf_height": data.get("pdf_height"),
-                "parsing_res_list": parsing_res_list  # 업데이트된 block_content 포함
-            }
-            
-            # 결과 저장
-            with open(json_file, 'w', encoding='utf-8') as f:
-                json.dump(output_data, f, ensure_ascii=False, indent=2)
-            
-            print(f"  Saved: {json_file.name}")
-        
-        print("\n" + "=" * 60)
-        print("\n[전체 처리 완료]")
-        print(f"  총 파일 수: {len(json_files)}")
-        print(f"  총 텍스트 블록: {total_text_blocks}")
-        print(f"  처리된 블록: {total_processed_blocks}")
-        print("=" * 60)

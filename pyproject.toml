@@ -1,0 +1,12 @@
+[project]
+name = "graph-rag"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.8,<3.14"
+dependencies = [
+    "paddleocr>=3.3.2",
+    "paddlepaddle>=3.1.1",
+    "pillow>=10.0.0",
+    "requests>=2.31.0",
+]

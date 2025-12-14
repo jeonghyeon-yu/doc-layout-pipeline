@@ -1,0 +1,45 @@
+services:
+  qwen3-vl:
+    build: .
+    image: qwen3-vl-openai:0.11.0
+    container_name: qwen3-vl-api
+
+    ports:
+      - "8888:8888"
+
+    ipc: host
+    shm_size: "16gb"
+
+    ulimits:
+      memlock: -1
+      stack: 67108864
+
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+
+    environment:
+      - HF_TOKEN=YOUR_HF_TOKEN_HERE
+      - NVIDIA_VISIBLE_DEVICES=0
+      - VLLM_LOGGING_LEVEL=DEBUG
+
+    gpus: all
+
+    # 중요: vllm-openai 이미지는 api_server.py가 엔트리포인트라
+    # 여기에는 "vllm serve"를 쓰지 말고, 문서대로 서버 인자만 전달
+    command: >
+      --model Qwen/Qwen3-VL-8B-Instruct
+      --host 0.0.0.0
+      --port 8888
+      --api-key optional-api-key-here
+      --gpu-memory-utilization 0.90
+      --max-model-len 6000
+      --max-num-seqs 1
+      --max-num-batched-tokens 1024
+      --limit-mm-per-prompt.video 0
+      --limit-mm-per-prompt.image 1
+
+    restart: unless-stopped
+
+volumes:
+  huggingface_cache:
+    driver: local

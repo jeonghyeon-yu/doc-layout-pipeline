@@ -2,6 +2,8 @@
 from pathlib import Path
 import logging
 import sys
+import time
+from datetime import timedelta
 
 # 모듈 import
 from layout_parsing import process_layout_parsing
@@ -20,7 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 설정
-INPUT_PATH = "page_0026.pdf"  # PDF 파일 경로
+INPUT_PATH = "work.pdf"  # PDF 파일 경로
 OUT_DIR = Path("output")
 OUT_DIR.mkdir(exist_ok=True)
 
@@ -55,6 +57,9 @@ def main():
         logger.error(f"입력 파일을 찾을 수 없습니다: {input_path}")
         return
     
+    # 전체 시작 시간
+    total_start_time = time.time()
+    
     logger.info("=" * 80)
     logger.info("전체 파이프라인 시작")
     logger.info("=" * 80)
@@ -73,13 +78,16 @@ def main():
     logger.info("1단계: 레이아웃 파싱")
     logger.info("=" * 80)
     
+    step1_start = time.time()
     try:
         parsing_results_dir, layout_parsing_output_dir = process_layout_parsing(
             input_path=input_path,
             out_dir=OUT_DIR,
             max_workers=MAX_WORKERS
         )
+        step1_elapsed = time.time() - step1_start
         logger.info("✅ 레이아웃 파싱 완료")
+        logger.info(f"  ⏱️  소요 시간: {timedelta(seconds=int(step1_elapsed))} ({step1_elapsed:.2f}초)")
         logger.info(f"  Parsing results (JSON): {parsing_results_dir}")
         logger.info(f"  Layout parsing output: {layout_parsing_output_dir}")
     except Exception as e:
@@ -93,6 +101,7 @@ def main():
     logger.info("2단계: 텍스트 추출 (paragraph_title, text, figure_title, header, footer)")
     logger.info("=" * 80)
     
+    step2_start = time.time()
     try:
         processed_files = process_all_json_files(
             parsing_results_dir=parsing_results_dir,
@@ -100,7 +109,9 @@ def main():
             output_dir=None,  # 원본 파일 덮어쓰기
             max_workers=MAX_WORKERS
         )
+        step2_elapsed = time.time() - step2_start
         logger.info(f"✅ 텍스트 추출 완료: {len(processed_files)}개 파일")
+        logger.info(f"  ⏱️  소요 시간: {timedelta(seconds=int(step2_elapsed))} ({step2_elapsed:.2f}초)")
     except Exception as e:
         logger.error(f"텍스트 추출 실패: {e}", exc_info=True)
         return
@@ -112,6 +123,7 @@ def main():
     logger.info("3단계: VLM 이미지 추출 (table, chart, figure)")
     logger.info("=" * 80)
     
+    step3_start = time.time()
     try:
         processed_files = extract_all_vlm_block_images(
             parsing_results_dir=parsing_results_dir,
@@ -119,7 +131,9 @@ def main():
             vlm_images_dir=vlm_images_dir,
             output_dir=None  # 원본 파일 덮어쓰기
         )
+        step3_elapsed = time.time() - step3_start
         logger.info(f"✅ VLM 이미지 추출 완료: {len(processed_files)}개 파일")
+        logger.info(f"  ⏱️  소요 시간: {timedelta(seconds=int(step3_elapsed))} ({step3_elapsed:.2f}초)")
         logger.info(f"  이미지 저장 위치: {vlm_images_dir}")
     except Exception as e:
         logger.error(f"VLM 이미지 추출 실패: {e}", exc_info=True)
@@ -128,11 +142,13 @@ def main():
     # ============================================================
     # 4. VLM 처리
     # ============================================================
+    step4_elapsed = 0
     if ENABLE_VLM_PROCESSING:
         logger.info("\n" + "=" * 80)
         logger.info("4단계: VLM 처리 (table, chart, figure → block_content 채우기)")
         logger.info("=" * 80)
         
+        step4_start = time.time()
         try:
             processed_files = process_vlm_blocks_from_images(
                 parsing_results_dir=parsing_results_dir,
@@ -145,7 +161,9 @@ def main():
                 output_dir=None,  # 원본 파일 덮어쓰기
                 batch_size=VLM_BATCH_SIZE
             )
+            step4_elapsed = time.time() - step4_start
             logger.info(f"✅ VLM 처리 완료: {len(processed_files)}개 파일")
+            logger.info(f"  ⏱️  소요 시간: {timedelta(seconds=int(step4_elapsed))} ({step4_elapsed:.2f}초)")
         except Exception as e:
             logger.error(f"VLM 처리 실패: {e}", exc_info=True)
             logger.warning("VLM 처리를 건너뛰고 계속 진행합니다.")
@@ -159,8 +177,21 @@ def main():
     # ============================================================
     # 완료
     # ============================================================
+    total_elapsed = time.time() - total_start_time
+    
     logger.info("\n" + "=" * 80)
     logger.info("전체 파이프라인 완료!")
+    logger.info("=" * 80)
+    logger.info("⏱️  실행 시간 요약:")
+    logger.info(f"  1단계 (레이아웃 파싱):     {timedelta(seconds=int(step1_elapsed))} ({step1_elapsed:.2f}초)")
+    logger.info(f"  2단계 (텍스트 추출):       {timedelta(seconds=int(step2_elapsed))} ({step2_elapsed:.2f}초)")
+    logger.info(f"  3단계 (VLM 이미지 추출):   {timedelta(seconds=int(step3_elapsed))} ({step3_elapsed:.2f}초)")
+    if ENABLE_VLM_PROCESSING:
+        logger.info(f"  4단계 (VLM 처리):          {timedelta(seconds=int(step4_elapsed))} ({step4_elapsed:.2f}초)")
+    else:
+        logger.info("  4단계 (VLM 처리):          건너뜀")
+    logger.info("  ─────────────────────────────────────────────")
+    logger.info(f"  총 소요 시간:               {timedelta(seconds=int(total_elapsed))} ({total_elapsed:.2f}초)")
     logger.info("=" * 80)
     logger.info("결과 위치:")
     logger.info(f"  - 레이아웃 파싱 결과: {parsing_results_dir}")

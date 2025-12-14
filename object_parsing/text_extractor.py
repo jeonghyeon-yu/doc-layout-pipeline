@@ -64,6 +64,32 @@ def _remove_duplicate_chars(chars: List[Dict]) -> List[Dict]:
     return result
 
 
+def _get_char_type(char: str) -> str:
+    """
+    문자 유형 분류
+    
+    Returns:
+        "korean": 한글
+        "hanja": 한자
+        "number": 숫자
+        "english": 영문
+        "punctuation": 구두점
+        "other": 기타
+    """
+    if re.match(r'[가-힣]', char):
+        return "korean"
+    elif re.match(r'[\u4e00-\u9fff]', char):  # 한자
+        return "hanja"
+    elif char.isdigit():
+        return "number"
+    elif char.isalpha():
+        return "english"
+    elif char in '(),.，。':
+        return "punctuation"
+    else:
+        return "other"
+
+
 def _apply_punctuation_rules(text: str) -> str:
     """
     구두점/괄호 붙임 규칙 적용
@@ -110,46 +136,72 @@ def extract_text_from_pdf_bbox(pdf_path: Path, pdf_bbox: List[float], page_index
         # PyMuPDF는 왼쪽 상단이 원점이므로 그대로 사용
         rect = fitz.Rect(x1, y1, x2, y2)
         
-        # dict 형식으로 텍스트 블록 추출 (좌표 정보 포함)
-        text_dict = page.get_text("dict", clip=rect)
+        # rawdict 형식으로 텍스트 블록 추출 (char 단위 bbox 포함)
+        # rawdict는 더 세밀한 정보를 제공하지만, 없으면 dict로 fallback
+        try:
+            text_dict = page.get_text("rawdict", clip=rect)
+        except Exception:
+            # rawdict를 지원하지 않으면 dict 사용
+            text_dict = page.get_text("dict", clip=rect)
         
         doc.close()
         
-        # 문자(char) 단위로 추출
+        # 문자(char) 단위로 추출 - 실제 char bbox 사용
         chars = []
         for block in text_dict.get("blocks", []):
             if "lines" not in block:
                 continue
             for line in block.get("lines", []):
                 for span in line.get("spans", []):
-                    text = span.get("text", "")
-                    bbox = span.get("bbox", [0, 0, 0, 0])
-                    if len(bbox) < 4 or not text:
-                        continue
+                    # span에 chars 속성이 있으면 실제 char bbox 사용
+                    span_chars = span.get("chars", [])
                     
-                    span_x0, span_y0, span_x1, span_y1 = bbox[0], bbox[1], bbox[2], bbox[3]
-                    span_width = span_x1 - span_x0
-                    
-                    # span의 텍스트를 문자 단위로 분해
-                    # 각 문자의 위치를 span 내에서 추정
-                    char_width = span_width / len(text) if len(text) > 0 else 0
-                    
-                    for i, char in enumerate(text):
-                        # 각 문자의 x 좌표 추정 (span 내에서 균등 분배)
-                        char_x0 = span_x0 + (i * char_width)
-                        char_x1 = span_x0 + ((i + 1) * char_width)
-                        char_y0 = span_y0
-                        char_y1 = span_y1
+                    if span_chars:
+                        # 실제 char 단위 bbox가 있는 경우
+                        for char_info in span_chars:
+                            char_text = char_info.get("c", "")  # 문자
+                            char_bbox = char_info.get("bbox", [0, 0, 0, 0])
+                            
+                            if len(char_bbox) >= 4 and char_text:
+                                chars.append({
+                                    "char": char_text,
+                                    "x0": char_bbox[0],
+                                    "y0": char_bbox[1],
+                                    "x1": char_bbox[2],
+                                    "y1": char_bbox[3],
+                                    "center_x": (char_bbox[0] + char_bbox[2]) / 2,
+                                    "center_y": (char_bbox[1] + char_bbox[3]) / 2,
+                                    "span_origin": span.get("bbox", [0, 0, 0, 0])[0] if len(span.get("bbox", [])) >= 1 else 0,
+                                    "span_end": span.get("bbox", [0, 0, 0, 0])[2] if len(span.get("bbox", [])) >= 3 else 0
+                                })
+                    else:
+                        # chars 속성이 없으면 fallback: span.text를 사용하되 실제 bbox는 span의 것
+                        text = span.get("text", "")
+                        bbox = span.get("bbox", [0, 0, 0, 0])
+                        if len(bbox) < 4 or not text:
+                            continue
                         
-                        chars.append({
-                            "char": char,
-                            "x0": char_x0,
-                            "y0": char_y0,
-                            "x1": char_x1,
-                            "y1": char_y1,
-                            "center_x": (char_x0 + char_x1) / 2,
-                            "center_y": (char_y0 + char_y1) / 2
-                        })
+                        # fallback: span bbox를 사용하되, 문자 단위로 분해
+                        span_x0, span_y0, span_x1, span_y1 = bbox[0], bbox[1], bbox[2], bbox[3]
+                        span_width = span_x1 - span_x0
+                        
+                        # 균등 분배 (fallback)
+                        char_width = span_width / len(text) if len(text) > 0 else 0
+                        for i, char in enumerate(text):
+                            char_x0 = span_x0 + (i * char_width)
+                            char_x1 = span_x0 + ((i + 1) * char_width)
+                            
+                            chars.append({
+                                "char": char,
+                                "x0": char_x0,
+                                "y0": span_y0,
+                                "x1": char_x1,
+                                "y1": span_y1,
+                                "center_x": (char_x0 + char_x1) / 2,
+                                "center_y": (span_y0 + span_y1) / 2,
+                                "span_origin": span_x0,
+                                "span_end": span_x1
+                            })
         
         if not chars:
             return ""
@@ -203,8 +255,54 @@ def extract_text_from_pdf_bbox(pdf_path: Path, pdf_bbox: List[float], page_index
                     next_char = line_chars[i + 1]
                     gap = next_char["x0"] - char["x1"]
                     
-                    # 거리가 일정 이상이면 공백 추가
-                    if gap > 2.0:
+                    # span 내부 추정 간격 고려
+                    estimated_gap = char.get("estimated_next_gap", 0)
+                    if estimated_gap > 0:
+                        # span 내부 간격이 추정되면, 실제 gap에 더해줌
+                        gap = max(gap, estimated_gap)
+                    
+                    # 거리 계산 개선:
+                    # 1. 같은 span 내 문자 vs 다른 span 문자 구분
+                    # 2. span 간 거리가 더 크면 공백 추가
+                    # 3. 문자 유형 기반 단어 경계 감지
+                    char_height = char["y1"] - char["y0"]
+                    
+                    # 같은 span 내 문자인지 확인
+                    same_span = (char.get("span_origin") == next_char.get("span_origin") and
+                                char.get("span_end") == next_char.get("span_end"))
+                    
+                    # 문자 유형 기반 단어 경계 감지
+                    # 예: "조" (한글) 다음에 "자" (한글)가 오는데 거리가 있으면 단어 경계일 수 있음
+                    char_type = _get_char_type(char["char"])
+                    next_char_type = _get_char_type(next_char["char"])
+                    
+                    # 단어 경계 패턴 감지 (한글+숫자+한글, 한글+한글 등)
+                    is_word_boundary = False
+                    if char_type == "korean" and next_char_type == "korean":
+                        # 한글-한글: 거리가 폰트 크기의 40% 이상이면 단어 경계 가능
+                        if gap > char_height * 0.4:
+                            is_word_boundary = True
+                    elif char_type in ["korean", "hanja"] and next_char_type in ["korean", "hanja"]:
+                        # 한글/한자-한글/한자: 거리가 폰트 크기의 35% 이상이면 단어 경계 가능
+                        if gap > char_height * 0.35:
+                            is_word_boundary = True
+                    
+                    if same_span:
+                        # 같은 span 내: 
+                        # - span 내부 간격이 추정되면 더 관대하게 (폰트 크기의 20% 이상)
+                        # - 단어 경계가 감지되면 폰트 크기의 25% 이상이면 공백
+                        # - 아니면 폰트 크기의 40% 이상이면 공백
+                        if estimated_gap > 0:
+                            gap_threshold = max(1.5, char_height * 0.2)
+                        elif is_word_boundary:
+                            gap_threshold = max(2.0, char_height * 0.25)
+                        else:
+                            gap_threshold = max(2.0, char_height * 0.4)
+                    else:
+                        # 다른 span: 폰트 크기의 20% 이상이면 공백 (더 관대)
+                        gap_threshold = max(1.5, char_height * 0.2)
+                    
+                    if gap > gap_threshold:
                         line_parts.append(" ")
             
             line_text = "".join(line_parts)

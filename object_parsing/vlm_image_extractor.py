@@ -307,7 +307,7 @@ def extract_vlm_block_images(
         return data
     
     # VLM 처리 대상 블록 라벨
-    vlm_block_labels = ["table", "chart", "figure"]
+    vlm_block_labels = ["table", "chart", "figure", "image"]
     
     # VLM 처리 대상 블록 처리
     processed_count = 0

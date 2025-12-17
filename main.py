@@ -22,7 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 설정
-INPUT_PATH = "work.pdf"  # PDF 파일 경로
+INPUT_PATH = "test_full.pdf"  # PDF 파일 경로
 OUT_DIR = Path("output")
 OUT_DIR.mkdir(exist_ok=True)
 

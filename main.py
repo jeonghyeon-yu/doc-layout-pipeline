@@ -10,6 +10,7 @@ from layout_parsing import process_layout_parsing
 from object_parsing.text_extractor import process_all_json_files
 from object_parsing.vlm_image_extractor import extract_all_vlm_block_images
 from object_parsing.vlm_processor import process_vlm_blocks_from_images
+from object_parsing.hierarchy_parser import process_hierarchy_parsing, DOC_TYPE_INSURANCE
 
 # 로깅 설정
 logging.basicConfig(
@@ -22,7 +23,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 설정
-INPUT_PATH = "test_full.pdf"  # PDF 파일 경로
+INPUT_PATH = "work.pdf"  # PDF 파일 경로
 OUT_DIR = Path("output")
 OUT_DIR.mkdir(exist_ok=True)
 
@@ -50,6 +51,7 @@ def main():
     2. 텍스트 추출 (텍스트 블록의 block_content 채우기)
     3. VLM 이미지 추출 (table, chart, figure 이미지 추출)
     4. VLM 처리 (선택적, 이미지 → VLM 처리 → block_content 채우기)
+    5. 계층 구조 파싱 (조항호목 계층 구조 추출)
     """
     input_path = Path(INPUT_PATH)
     
@@ -70,6 +72,7 @@ def main():
     parsing_results_dir = layout_parsing_output_dir / "parsing_results"
     pdf_pages_dir = layout_parsing_output_dir / "pdf_pages"
     vlm_images_dir = layout_parsing_output_dir / "vlm_images"
+    hierarchy_output_file = OUT_DIR / base_name / "parsed_hierarchy_v3.json"
     
     # ============================================================
     # 1. 레이아웃 파싱
@@ -175,6 +178,29 @@ def main():
         logger.info(f"  VLM 이미지 저장 위치: {vlm_images_dir}")
     
     # ============================================================
+    # 5. 계층 구조 파싱
+    # ============================================================
+    logger.info("\n" + "=" * 80)
+    logger.info("5단계: 계층 구조 파싱 (조항호목)")
+    logger.info("=" * 80)
+    
+    step5_start = time.time()
+    try:
+        process_hierarchy_parsing(
+            parsing_results_dir=parsing_results_dir,
+            output_file=hierarchy_output_file,
+            doc_type=DOC_TYPE_INSURANCE
+        )
+        step5_elapsed = time.time() - step5_start
+        logger.info("✅ 계층 구조 파싱 완료")
+        logger.info(f"  ⏱️  소요 시간: {timedelta(seconds=int(step5_elapsed))} ({step5_elapsed:.2f}초)")
+        logger.info(f"  출력 파일: {hierarchy_output_file}")
+    except Exception as e:
+        logger.error(f"계층 구조 파싱 실패: {e}", exc_info=True)
+        logger.warning("계층 구조 파싱을 건너뛰고 계속 진행합니다.")
+        step5_elapsed = 0
+    
+    # ============================================================
     # 완료
     # ============================================================
     total_elapsed = time.time() - total_start_time
@@ -190,6 +216,7 @@ def main():
         logger.info(f"  4단계 (VLM 처리):          {timedelta(seconds=int(step4_elapsed))} ({step4_elapsed:.2f}초)")
     else:
         logger.info("  4단계 (VLM 처리):          건너뜀")
+    logger.info(f"  5단계 (계층 구조 파싱):     {timedelta(seconds=int(step5_elapsed))} ({step5_elapsed:.2f}초)")
     logger.info("  ─────────────────────────────────────────────")
     logger.info(f"  총 소요 시간:               {timedelta(seconds=int(total_elapsed))} ({total_elapsed:.2f}초)")
     logger.info("=" * 80)
@@ -197,6 +224,7 @@ def main():
     logger.info(f"  - 레이아웃 파싱 결과: {parsing_results_dir}")
     logger.info(f"  - PDF 페이지: {pdf_pages_dir}")
     logger.info(f"  - VLM 이미지: {vlm_images_dir}")
+    logger.info(f"  - 계층 구조 파싱 결과: {hierarchy_output_file}")
     logger.info("=" * 80)
 
 

@@ -125,19 +125,20 @@ def extract_text_with_font_info_from_pdf_bbox(
     Returns:
         {
             "text": 추출된 텍스트,
+            "text_length": 텍스트 문자 길이,
             "font_size": 폰트 크기 (평균값, None일 수 있음),
             "is_bold": 볼드 여부 (True/False, None일 수 있음),
             "font_name": 폰트 이름 (None일 수 있음)
         }
     """
     if len(pdf_bbox) != 4:
-        return {"text": "", "font_size": None, "is_bold": None, "font_name": None}
+        return {"text": "", "text_length": 0, "font_size": None, "is_bold": None, "font_name": None}
     
     try:
         doc = fitz.open(str(pdf_path))
         if page_index >= len(doc):
             doc.close()
-            return {"text": "", "font_size": None, "is_bold": None, "font_name": None}
+            return {"text": "", "text_length": 0, "font_size": None, "is_bold": None, "font_name": None}
         
         page = doc[page_index]
         x1, y1, x2, y2 = pdf_bbox
@@ -230,7 +231,7 @@ def extract_text_with_font_info_from_pdf_bbox(
                             })
         
         if not chars:
-            return {"text": "", "font_size": None, "is_bold": None, "font_name": None}
+            return {"text": "", "text_length": 0, "font_size": None, "is_bold": None, "font_name": None}
         
         # 중복 문자 제거 (overprint 대응)
         chars = _remove_duplicate_chars(chars)
@@ -342,15 +343,19 @@ def extract_text_with_font_info_from_pdf_bbox(
         # 가장 많이 사용된 폰트 이름
         font_name = max(set(font_names), key=font_names.count) if font_names else None
         
+        # 텍스트 길이 계산
+        text_length = len(text)
+        
         return {
             "text": text,
+            "text_length": text_length,
             "font_size": round(avg_font_size, 2) if avg_font_size else None,
             "is_bold": is_bold,
             "font_name": font_name
         }
     except Exception as e:
         logger.error(f"텍스트 추출 실패 ({pdf_path}, page {page_index}): {e}", exc_info=True)
-        return {"text": "", "font_size": None, "is_bold": None, "font_name": None}
+        return {"text": "", "text_length": 0, "font_size": None, "is_bold": None, "font_name": None}
 
 
 def extract_text_from_pdf_bbox(pdf_path: Path, pdf_bbox: List[float], page_index: int = 0) -> str:
@@ -587,7 +592,7 @@ def extract_texts_with_font_info_from_pdf_bboxes(
         page_index: 페이지 인덱스 (0부터 시작)
     
     Returns:
-        추출된 텍스트와 폰트 정보 리스트 (각 항목은 {"text", "font_size", "is_bold", "font_name"} 포함)
+        추출된 텍스트와 폰트 정보 리스트 (각 항목은 {"text", "text_length", "font_size", "is_bold", "font_name"} 포함)
     """
     if not pdf_bboxes:
         return []
@@ -597,7 +602,7 @@ def extract_texts_with_font_info_from_pdf_bboxes(
         
         for pdf_bbox in pdf_bboxes:
             if len(pdf_bbox) != 4:
-                results.append({"text": "", "font_size": None, "is_bold": None, "font_name": None})
+                results.append({"text": "", "text_length": 0, "font_size": None, "is_bold": None, "font_name": None})
                 continue
             
             # extract_text_with_font_info_from_pdf_bbox를 재사용
@@ -606,7 +611,7 @@ def extract_texts_with_font_info_from_pdf_bboxes(
         return results
     except Exception as e:
         logger.error(f"텍스트 추출 실패 ({pdf_path}, page {page_index}): {e}", exc_info=True)
-        return [{"text": "", "font_size": None, "is_bold": None, "font_name": None}] * len(pdf_bboxes)
+        return [{"text": "", "text_length": 0, "font_size": None, "is_bold": None, "font_name": None}] * len(pdf_bboxes)
 
 
 def extract_texts_from_pdf_bboxes(
@@ -697,6 +702,8 @@ def process_text_blocks_in_json(
         # 추출된 텍스트와 폰트 정보를 블록에 할당
         for idx, info in zip(text_block_indices, text_font_infos):
             parsing_res_list[idx]["block_content"] = info.get("text", "")
+            # 텍스트 길이 추가
+            parsing_res_list[idx]["text_length"] = info.get("text_length", 0)
             # 폰트 정보 추가
             if info.get("font_size") is not None:
                 parsing_res_list[idx]["font_size"] = info["font_size"]

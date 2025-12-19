@@ -11,3 +11,4 @@ wheels/
 
 # Output directories
 output/
+*.pdf

@@ -1,7 +1,7 @@
 [project]
 name = "graph-rag"
 version = "0.1.0"
-description = "Add your description here"
+description = "PDF 문서 계층 구조 파싱 및 Neo4j/Embedding 준비 시스템"
 readme = "README.md"
 requires-python = ">=3.8,<3.14"
 dependencies = [
@@ -9,4 +9,5 @@ dependencies = [
     "paddlepaddle>=3.1.1",
     "pillow>=10.0.0",
     "requests>=2.31.0",
+    "pymupdf>=1.23.0",  # PyMuPDF (fitz)
 ]

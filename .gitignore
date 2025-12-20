@@ -12,3 +12,8 @@ wheels/
 # Output directories
 output/
 *.pdf
+
+# Environment files
+.env
+!.env.example
+.md

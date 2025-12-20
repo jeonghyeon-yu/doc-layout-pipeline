@@ -415,6 +415,14 @@ class PatternMatcher:
         if not content:
             return None
         
+        re_jo_reference = re.compile(
+            r'^제\s*\d+\s*조(?:의\s*\d+)?\s*'
+            r'(?:[(\[（][^)\]）]*[)\]）])?\s*'
+            r'(의\s|에\s|를\s|와\s|과\s|에서\s|으로\s|부터\s)'
+        )
+        if re_jo_reference.match(content):
+            return None
+
         # 특수 블록
         m = self.re_special.match(content)
         if m:
@@ -722,8 +730,8 @@ class DocumentParser:
         # 섹션 제목 패턴
         section_patterns = [
             # 약관 패턴
-            re.compile(r'^[가-힣A-Za-z0-9\s\(\)]+\s*(보통약관|특별약관|추가약관)\s*$'),
-            re.compile(r'^[가-힣A-Za-z0-9\s]+\s*(보통약관|특별약관|추가약관)\s*[\(（][^)）]*[\)）]\s*$'),
+            re.compile(r'^[가-힣A-Za-z0-9\s\(\),，및]+\s*(보통약관|특별약관|추가약관)\s*$'),
+            re.compile(r'^[가-힣A-Za-z0-9\s,，및]+\s*(보통약관|특별약관|추가약관)\s*[\(（][^)）]*[\)）]\s*$'),
             
             # 법률 패턴 (동적 - XX법, XX령 등)
             re.compile(r'^[가-힣]+(?:법|령|규정|규칙)\s*$'),

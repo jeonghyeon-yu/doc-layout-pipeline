@@ -4,3 +4,4 @@
  - 레퍼런스 내용 추가해야하는 것
  - 약관 시작 페이지가 아닌 거는 삭제해야할 듯
  - embedding으로 저장된 것 진짜 embedding 처리 (좋은 embedding 모델 research)
+ - 이상하게 뽑히는 것 확인 test_2

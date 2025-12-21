@@ -203,19 +203,19 @@ def main():
     parser.add_argument(
         '--parsing-results',
         type=str,
-        default=r"C:\Users\bigda\Desktop\graph_rag\output\test_full\layout_parsing_output\parsing_results",
+        default="output/test_full/layout_parsing_output/parsing_results",
         help="parsing_results 디렉토리 경로"
     )
     parser.add_argument(
         '--hierarchy-output',
         type=str,
-        default=r"C:\Users\bigda\Desktop\graph_rag\output\test_full\document_hierarchy.json",
+        default="output/test_full/document_hierarchy.json",
         help="계층 구조 출력 파일 경로"
     )
     parser.add_argument(
         '--neo4j-export',
         type=str,
-        default=r"C:\Users\bigda\Desktop\graph_rag\output\test_full\neo4j_export",
+        default="output/test_full/neo4j_export",
         help="Neo4j export 출력 디렉토리"
     )
     parser.add_argument(

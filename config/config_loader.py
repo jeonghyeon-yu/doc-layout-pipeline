@@ -68,8 +68,10 @@ def _load_env_file(env_file: str) -> None:
         logger.warning(f".env 파일을 찾을 수 없습니다: {env_file}")
         return
     
-    with open(env_path, 'r', encoding='utf-8') as f:
-        for line in f:
+    loaded_vars = []
+    with open(env_path, 'r', encoding='utf-8-sig') as f:  # utf-8-sig: BOM 자동 제거
+        for line_num, line in enumerate(f, 1):
+            original_line = line
             line = line.strip()
             # 주석 및 빈 줄 무시
             if not line or line.startswith('#'):
@@ -78,9 +80,18 @@ def _load_env_file(env_file: str) -> None:
             # KEY=VALUE 파싱
             if '=' in line:
                 key, value = line.split('=', 1)
-                key = key.strip()
+                key = key.strip().strip('\ufeff')  # BOM 제거 (이중 보험)
                 value = value.strip().strip('"').strip("'")
                 os.environ[key] = value
+                loaded_vars.append((key, value))
+                logger.debug(f".env 파일에서 환경 변수 설정: {key}={value}")
+            else:
+                logger.warning(f".env 파일 {line_num}줄 파싱 실패 (KEY=VALUE 형식 아님): {original_line.strip()[:50]}")
+    
+    if loaded_vars:
+        logger.debug(f".env 파일에서 총 {len(loaded_vars)}개 환경 변수 로드됨")
+    else:
+        logger.warning(f".env 파일에서 환경 변수를 찾지 못했습니다")
 
 
 def load_config(env_file: Optional[str] = ".env") -> Config:

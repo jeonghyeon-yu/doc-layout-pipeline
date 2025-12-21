@@ -416,10 +416,13 @@ class PatternMatcher:
             return None
         
         re_jo_reference = re.compile(
-            r'^제\s*\d+\s*조(?:의\s*\d+)?\s*'
-            r'(?:[(\[（][^)\]）]*[)\]）])?\s*'
-            r'(의\s|에\s|를\s|와\s|과\s|에서\s|으로\s|부터\s)'
+            r'^제\s*\d+\s*조(?:의\s*\d+)?\s*'           # 제N조, 제N조의M
+            r'(?:[(\[（][^)\]）]*[)\]）])?\s*'          # (제목) 선택
+            r'(?:제?\s*\d+\s*(?:항|호|목)[\s,]*)*'     # 제N항/호/목 (여러개 가능)
+            r'(?:및\s*제?\s*\d+\s*(?:항|호|목)[\s,]*)*' # 및 제N항 (선택)
+            r'(의|에|를|와|과|에서|으로|부터|에\s*따라|에\s*의하여|에\s*해당|에\s*관한|에\s*대하여)'
         )
+        
         if re_jo_reference.match(content):
             return None
 
@@ -745,7 +748,8 @@ class DocumentParser:
             re.compile(r'분쟁.*사례.*유의', re.IGNORECASE),
             
             # 슬래시 구분 제목
-            re.compile(r'^[가-힣A-Za-z0-9\s]+\s*/\s*[가-힣A-Za-z0-9\s]+'),
+            re.compile(r'^[가-힣A-Za-z\s]+\s*/\s*[가-힣A-Za-z\s]+'),
+
         ]
         
         # 섹션이 아닌 패턴 (문장)
@@ -845,7 +849,8 @@ class DocumentParser:
             if in_special_block and current_special_node:
                 # 글로벌 special은 조/관/장/절/편에서만 종료
                 if current_special_node.metadata.get('global'):
-                    if re.match(r'^제\s*\d+\s*(조|관|장|절|편)', content):
+                    new_global = self._check_global_special(content)
+                    if (re.match(r'^제\s*\d+\s*(조|관|장|절|편)', content) or new_global):
                         in_special_block = False
                         current_special_node = None
                     else:
@@ -1004,6 +1009,9 @@ class DocumentParser:
         
         if re.match(r'^비고\s*$', content) or re.match(r'^비고\s*\d', content):
             return {'type': 'note', 'marker': '비고', 'title': content[:50]}
+
+        if '약관에서 인용된 법' in content or re.match(r'^[\[【]법규', content):
+            return {'type': 'law_reference', 'marker': '법규정', 'title': content[:50]}
         
         return None
     
@@ -1237,13 +1245,15 @@ def process_hierarchy_parsing(
 # =============================================================================
 
 def main():
-    input_dir = r"C:\Users\bigda\Desktop\graph_rag\output\test_full\layout_parsing_output\parsing_results"
-    output_file = r"C:\Users\bigda\Desktop\graph_rag\output\test_full\parsed_hierarchy_v4.json"
+    # 상대 경로 사용 (프로젝트 루트 기준)
+    script_dir = Path(__file__).parent.parent
+    input_dir = script_dir / "output" / "test_full" / "layout_parsing_output" / "parsing_results"
+    output_file = script_dir / "output" / "test_full" / "parsed_hierarchy_v4.json"
     
     # 파싱 실행
-    parser = DocumentParser(input_dir, doc_type=DOC_TYPE_INSURANCE)
+    parser = DocumentParser(str(input_dir), doc_type=DOC_TYPE_INSURANCE)
     root = parser.parse()
-    parser.save(output_file)
+    parser.save(str(output_file))
     
     # 트리 미리보기
     print("\n" + "=" * 80)

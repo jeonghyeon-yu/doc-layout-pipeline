@@ -4,10 +4,9 @@ hierarchy_parser와 section_exporter 테스트 스크립트
 main.py의 실행 단계를 선택해서 실행할 수 있습니다.
 원하는 단계만 선택해서 실행 가능합니다.
 """
-import json
 import sys
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import List, Set
 import logging
 import time
 from datetime import timedelta
@@ -18,6 +17,7 @@ from object_parsing.hierarchy_parser import (
     DOC_TYPE_LAW
 )
 from object_parsing.section_exporter import process_section_export
+from object_parsing.text_extractor import process_all_json_files
 
 # 로깅 설정
 logging.basicConfig(
@@ -34,14 +34,47 @@ class PipelineTestRunner:
     def __init__(
         self,
         parsing_results_dir: Path,
+        pdf_pages_dir: Path,
         hierarchy_output_file: Path,
         neo4j_export_dir: Path,
-        doc_type: str = DOC_TYPE_INSURANCE
+        doc_type: str = DOC_TYPE_INSURANCE,
+        max_workers: int = 10
     ):
         self.parsing_results_dir = parsing_results_dir
+        self.pdf_pages_dir = pdf_pages_dir
         self.hierarchy_output_file = hierarchy_output_file
         self.neo4j_export_dir = neo4j_export_dir
         self.doc_type = doc_type
+        self.max_workers = max_workers
+    
+    def run_step4_text_extraction(self) -> List[Path]:
+        """
+        4단계: 텍스트 추출 (텍스트 블록의 block_content 채우기 및 박스 감지)
+        
+        Returns:
+            처리된 파일 경로 리스트
+        """
+        logger.info("\n" + "=" * 80)
+        logger.info("4단계: 텍스트 추출 (텍스트 블록 처리 및 박스 감지)")
+        logger.info("=" * 80)
+        
+        step_start = time.time()
+        try:
+            processed_files = process_all_json_files(
+                parsing_results_dir=self.parsing_results_dir,
+                pdf_pages_dir=self.pdf_pages_dir,
+                output_dir=None,  # 원본 파일에 덮어쓰기
+                max_workers=self.max_workers
+            )
+            step_elapsed = time.time() - step_start
+            logger.info("✅ 텍스트 추출 완료")
+            logger.info(f"  ⏱️  소요 시간: {timedelta(seconds=int(step_elapsed))} ({step_elapsed:.2f}초)")
+            logger.info(f"  처리된 파일 수: {len(processed_files)}개")
+            return processed_files
+        except Exception as e:
+            step_elapsed = time.time() - step_start
+            logger.error(f"텍스트 추출 실패: {e}", exc_info=True)
+            raise
     
     def run_step5_hierarchy_parsing(self) -> tuple[Path, Path]:
         """
@@ -122,6 +155,14 @@ class PipelineTestRunner:
         
         results = {}
         
+        # 4단계: 텍스트 추출
+        if 4 in steps:
+            processed_files = self.run_step4_text_extraction()
+            results[4] = {
+                'processed_files': processed_files,
+                'count': len(processed_files)
+            }
+        
         # 5단계: 계층 구조 파싱
         if 5 in steps:
             hierarchy_main_file, hierarchy_ref_file = self.run_step5_hierarchy_parsing()
@@ -187,35 +228,50 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 사용 예시:
+  # 4단계만 실행 (텍스트 추출)
+  python test.py --steps 4
+  
   # 5단계만 실행 (계층 구조 파싱)
   python test.py --steps 5
   
   # 6단계만 실행 (섹션별 내보내기)
   python test.py --steps 6
   
-  # 5, 6단계 모두 실행
-  python test.py --steps 5,6
+  # 4, 5, 6단계 모두 실행
+  python test.py --steps 4,5,6
   
-  # 5-6단계 실행 (5, 6)
-  python test.py --steps 5-6
+  # 4-6단계 실행 (4, 5, 6)
+  python test.py --steps 4-6
         """
     )
     parser.add_argument(
         '--parsing-results',
         type=str,
-        default="output/test_full/layout_parsing_output/parsing_results",
+        default="output/test_2/layout_parsing_output/parsing_results",
         help="parsing_results 디렉토리 경로"
+    )
+    parser.add_argument(
+        '--pdf-pages',
+        type=str,
+        default="output/test_2/layout_parsing_output/pdf_pages",
+        help="PDF 페이지 디렉토리 경로"
     )
     parser.add_argument(
         '--hierarchy-output',
         type=str,
-        default="output/test_full/document_hierarchy.json",
+        default="output/test_2/document_hierarchy.json",
         help="계층 구조 출력 파일 경로"
+    )
+    parser.add_argument(
+        '--max-workers',
+        type=int,
+        default=10,
+        help="병렬 처리 워커 수 (텍스트 추출 단계에서 사용)"
     )
     parser.add_argument(
         '--neo4j-export',
         type=str,
-        default="output/test_full/neo4j_export",
+        default="output/test_2/neo4j_export",
         help="Neo4j export 출력 디렉토리"
     )
     parser.add_argument(
@@ -228,14 +284,15 @@ def main():
     parser.add_argument(
         '--steps',
         type=str,
-        default='5,6',
-        help="실행할 단계 (예: '5', '6', '5,6', '5-6'). 가능한 단계: 5(계층 파싱), 6(섹션 내보내기)"
+        default='4,5,6',
+        help="실행할 단계 (예: '4', '5', '6', '4,5,6', '4-6'). 가능한 단계: 4(텍스트 추출), 5(계층 파싱), 6(섹션 내보내기)"
     )
     
     args = parser.parse_args()
     
     # 경로 변환
     parsing_results_dir = Path(args.parsing_results)
+    pdf_pages_dir = Path(args.pdf_pages)
     hierarchy_output_file = Path(args.hierarchy_output)
     neo4j_export_dir = Path(args.neo4j_export)
     doc_type = DOC_TYPE_INSURANCE if args.doc_type == 'insurance' else DOC_TYPE_LAW
@@ -248,7 +305,7 @@ def main():
         return
     
     # 유효한 단계 확인
-    valid_steps = {5, 6}
+    valid_steps = {4, 5, 6}
     invalid_steps = selected_steps - valid_steps
     if invalid_steps:
         logger.error(f"유효하지 않은 단계: {invalid_steps}. 가능한 단계: {valid_steps}")
@@ -257,9 +314,11 @@ def main():
     # Runner 생성
     runner = PipelineTestRunner(
         parsing_results_dir=parsing_results_dir,
+        pdf_pages_dir=pdf_pages_dir,
         hierarchy_output_file=hierarchy_output_file,
         neo4j_export_dir=neo4j_export_dir,
-        doc_type=doc_type
+        doc_type=doc_type,
+        max_workers=args.max_workers
     )
     
     # 실행

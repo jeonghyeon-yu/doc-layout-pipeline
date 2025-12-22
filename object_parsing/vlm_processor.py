@@ -43,7 +43,17 @@ DEFAULT_VLM_PROMPTS = {
     
     "figure": """이 이미지는 문서의 그림 또는 도표입니다.
 그림의 주요 내용과 의미를 요약해주세요.
-한국어로 작성해주세요."""
+한국어로 작성해주세요.""",
+    
+    "image": """이 이미지는 문서에 포함된 이미지입니다.
+이미지의 주요 내용과 의미를 설명해주세요.
+한국어로 작성해주세요.""",
+    
+    "formula": """이 이미지는 문서의 수식입니다.
+수식을 정확하게 LaTeX 형식으로만 변환해주세요.
+LaTeX 코드만 반환하고, 설명이나 다른 텍스트는 포함하지 마세요.
+예: $E = mc^2$ 또는 \\[\\int_{0}^{\\infty} e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}\\]
+응답은 LaTeX 수식 코드만 포함해야 합니다."""
 }
 
 
@@ -52,18 +62,19 @@ def collect_all_vlm_images(
     block_label: Optional[str] = None
 ) -> List[Dict[str, any]]:
     """
-    vlm_images 폴더의 타입별 하위 폴더(vlm_images/table/, vlm_images/chart/, vlm_images/figure/)에서 
+    vlm_images 폴더의 타입별 하위 폴더(vlm_images/table/, vlm_images/chart/, vlm_images/figure/, vlm_images/image/, vlm_images/formula/)에서 
     모든 VLM 이미지 파일을 수집 (배치 처리 시 사용)
     
     Args:
-        vlm_images_dir: vlm_images 디렉토리 경로 (vlm_images/table/, vlm_images/chart/, vlm_images/figure/ 포함)
+        vlm_images_dir: vlm_images 디렉토리 경로 (vlm_images/table/, vlm_images/chart/, vlm_images/figure/, vlm_images/image/, vlm_images/formula/ 포함)
         block_label: 특정 타입만 수집 (None이면 모든 타입)
     
     Returns:
         [{"block_label": "table", "block_id": "page_0001_0_res_block_0", 
           "img_path": Path, "json_stem": "page_0001_0_res", "block_idx": 0}, ...]
+        block_label는 "table", "chart", "figure", "image", "formula" 중 하나
     """
-    vlm_block_labels = ["table", "chart", "figure"] if block_label is None else [block_label]
+    vlm_block_labels = ["table", "chart", "figure", "image", "formula"] if block_label is None else [block_label]
     collected_images = []
     
     for label in vlm_block_labels:
@@ -113,11 +124,11 @@ def create_vlm_functions_from_client(
     Args:
         vlm_client: Qwen3VLClient 인스턴스
         prompts: 블록 타입별 프롬프트 딕셔너리 (선택사항)
-            예: {"table": "테이블 프롬프트", "chart": "차트 프롬프트", "figure": "그림 프롬프트"}
+            예: {"table": "테이블 프롬프트", "chart": "차트 프롬프트", "figure": "그림 프롬프트", "image": "이미지 프롬프트", "formula": "수식 프롬프트"}
             None이면 클라이언트의 기본 프롬프트 사용
     
     Returns:
-        {"table": table_func, "chart": chart_func, "figure": figure_func} 딕셔너리
+        {"table": table_func, "chart": chart_func, "figure": figure_func, "image": image_func, "formula": formula_func} 딕셔너리
     """
     if vlm_client is None:
         logger.warning("VLM 클라이언트가 None입니다. 더미 함수를 반환합니다.")
@@ -126,18 +137,24 @@ def create_vlm_functions_from_client(
         return {
             "table": dummy_func,
             "chart": dummy_func,
-            "figure": dummy_func
+            "figure": dummy_func,
+            "image": dummy_func,
+            "formula": dummy_func
         }
     
     # 프롬프트가 제공되면 사용, 없으면 None (클라이언트 기본값 사용)
     table_prompt = prompts.get("table") if prompts and "table" in prompts else None
     chart_prompt = prompts.get("chart") if prompts and "chart" in prompts else None
     figure_prompt = prompts.get("figure") if prompts and "figure" in prompts else None
+    image_prompt = prompts.get("image") if prompts and "image" in prompts else None
+    formula_prompt = prompts.get("formula") if prompts and "formula" in prompts else None
     
     return {
         "table": lambda img: vlm_client.process_table(img, prompt=table_prompt),
         "chart": lambda img: vlm_client.process_chart(img, prompt=chart_prompt),
-        "figure": lambda img: vlm_client.process_figure(img, prompt=figure_prompt)
+        "figure": lambda img: vlm_client.process_figure(img, prompt=figure_prompt),
+        "image": lambda img: vlm_client.process_image(img, prompt=image_prompt),
+        "formula": lambda img: vlm_client.process_formula(img, prompt=formula_prompt)
     }
 
 
@@ -158,9 +175,9 @@ def process_vlm_blocks_from_images(
     
     Args:
         parsing_results_dir: 레이아웃 파싱 결과 JSON 파일들이 있는 디렉토리
-        vlm_images_dir: vlm_images 디렉토리 경로 (vlm_images/table/, vlm_images/chart/, vlm_images/figure/ 포함)
+        vlm_images_dir: vlm_images 디렉토리 경로 (vlm_images/table/, vlm_images/chart/, vlm_images/figure/, vlm_images/image/, vlm_images/formula/ 포함)
         vlm_functions: 블록 타입별 VLM 처리 함수 딕셔너리 (선택사항)
-            예: {"table": table_vlm_func, "chart": chart_vlm_func, "figure": figure_vlm_func}
+            예: {"table": table_vlm_func, "chart": chart_vlm_func, "figure": figure_vlm_func, "image": image_vlm_func, "formula": formula_vlm_func}
         vlm_client: Qwen3VLClient 인스턴스 (vlm_functions가 None일 때 사용)
         vlm_api_base: VLM API 베이스 URL (vlm_client가 None일 때 자동 생성)
         vlm_api_key: VLM API 키 (기본값: "optional-api-key-here", docker-compose.yml의 --api-key와 일치해야 함)
@@ -217,7 +234,7 @@ def process_vlm_blocks_from_images(
             logger.error(f"VLM 이미지 디렉토리가 존재하지 않습니다: {vlm_images_dir}")
             return []
         all_images = collect_all_vlm_images(vlm_images_dir)
-        logger.info(f"이미지 수집 완료: {len(all_images)}개 (vlm_images/{{table,chart,figure}}/ 폴더에서)")
+        logger.info(f"이미지 수집 완료: {len(all_images)}개 (vlm_images/{{table,chart,figure,image,formula}}/ 폴더에서)")
         if len(all_images) == 0:
             logger.warning("처리할 VLM 이미지가 없습니다. 이미지 추출 단계를 먼저 실행하세요.")
             return []
@@ -353,7 +370,7 @@ def process_vlm_blocks_from_images(
         json_stem = Path(json_file).stem  # page_0001_0_res
         
         # VLM 처리 대상 블록 라벨
-        vlm_block_labels = ["table", "chart", "figure"]
+        vlm_block_labels = ["table", "chart", "figure", "image", "formula"]
         
         processed_count = 0
         vlm_block_count = 0

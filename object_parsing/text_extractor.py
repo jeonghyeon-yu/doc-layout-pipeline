@@ -537,6 +537,64 @@ def extract_texts_with_font_info_from_pdf_bboxes(
 
 
 # =============================================================================
+# Private Glyph 감지 및 Formula 재라벨링
+# =============================================================================
+
+def has_private_glyphs(text: str) -> bool:
+    """
+    텍스트에 Private Use Area 문자(U+E000 ~ U+F8FF)가 포함되어 있는지 확인
+    
+    Args:
+        text: 확인할 텍스트
+    
+    Returns:
+        Private Use Area 문자가 포함되어 있으면 True
+    """
+    if not text:
+        return False
+    
+    # Private Use Area 범위 체크
+    for char in text:
+        code_point = ord(char)
+        # U+E000 ~ U+F8FF: Private Use Area (가장 흔한 범위)
+        if 0xE000 <= code_point <= 0xF8FF:
+            return True
+    
+    return False
+
+
+def detect_and_relabel_formula_blocks(parsing_res_list: List[Dict]) -> int:
+    """
+    텍스트 블록 중 private glyph가 포함된 블록을 formula로 재라벨링
+    
+    Args:
+        parsing_res_list: 블록 리스트
+    
+    Returns:
+        재라벨링된 블록 수
+    """
+    text_block_labels = ["doc_title", "paragraph_title", "text", "figure_title", "header", 'vision_footnote']
+    relabeled_count = 0
+    
+    for block in parsing_res_list:
+        block_label = block.get("block_label", "")
+        block_content = block.get("block_content", "")
+        
+        # 텍스트 블록이고, private glyph가 포함되어 있으면 formula로 변경
+        # (이미 formula인 블록은 변경하지 않음)
+        if block_label in text_block_labels and has_private_glyphs(block_content):
+            logger.debug(f"블록 라벨 변경: {block_label} -> formula (block_id={block.get('block_id')}, "
+                        f"content_preview={block_content[:50]}...)")
+            block["block_label"] = "formula"
+            relabeled_count += 1
+    
+    if relabeled_count > 0:
+        logger.info(f"Private glyph 감지: {relabeled_count}개 블록을 formula로 재라벨링")
+    
+    return relabeled_count
+
+
+# =============================================================================
 # 메인 처리 함수 (박스 감지 추가)
 # =============================================================================
 
@@ -614,6 +672,11 @@ def process_text_blocks_in_json(
                 parsing_res_list[idx]["is_bold"] = info["is_bold"]
             if info.get("font_name"):
                 parsing_res_list[idx]["font_name"] = info["font_name"]
+    
+    # =========================================================================
+    # 2.5. Private glyph가 포함된 텍스트 블록을 formula로 재라벨링
+    # =========================================================================
+    detect_and_relabel_formula_blocks(parsing_res_list)
     
     # =========================================================================
     # 3. 각 블록이 박스 안에 있는지 확인 (개선된 방식 사용)

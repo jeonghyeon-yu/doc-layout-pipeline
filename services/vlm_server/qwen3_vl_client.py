@@ -95,6 +95,44 @@ class Qwen3VLClient:
         
         return self._process_image(img, prompt)
     
+    def process_image(self, img: Image.Image, prompt: Optional[str] = None) -> str:
+        """
+        일반 이미지를 요약
+        
+        Args:
+            img: PIL Image 객체
+            prompt: 사용자 프롬프트 (None이면 기본 프롬프트 사용)
+        
+        Returns:
+            이미지 요약 텍스트
+        """
+        if prompt is None:
+            prompt = """이 이미지는 문서에 포함된 이미지입니다.
+                    이미지의 주요 내용과 의미를 설명해주세요.
+                    한국어로 작성해주세요."""
+        
+        return self._process_image(img, prompt)
+    
+    def process_formula(self, img: Image.Image, prompt: Optional[str] = None) -> str:
+        """
+        수식 이미지를 LaTeX 형식으로 변환
+        
+        Args:
+            img: PIL Image 객체
+            prompt: 사용자 프롬프트 (None이면 기본 프롬프트 사용)
+        
+        Returns:
+            LaTeX 형식의 수식 텍스트
+        """
+        if prompt is None:
+            prompt = """이 이미지는 문서의 수식입니다.
+                    수식을 정확하게 LaTeX 형식으로만 변환해주세요.
+                    LaTeX 코드만 반환하고, 설명이나 다른 텍스트는 포함하지 마세요.
+                    예: $E = mc^2$ 또는 \\[\\int_{0}^{\\infty} e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}\\]
+                    응답은 LaTeX 수식 코드만 포함해야 합니다."""
+        
+        return self._process_image(img, prompt)
+    
     def _process_image(self, img: Image.Image, prompt: str) -> str:
         """
         이미지를 Qwen3-VL API로 처리

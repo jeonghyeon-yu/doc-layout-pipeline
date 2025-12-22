@@ -7,6 +7,7 @@ from datetime import timedelta
 
 # 모듈 import
 from layout_parsing import process_layout_parsing
+from layout_parsing.html_generator import generate_html_from_json_files
 from object_parsing.text_extractor import process_all_json_files
 from object_parsing.vlm_image_extractor import extract_all_vlm_block_images
 from object_parsing.vlm_processor import process_vlm_blocks_from_images
@@ -159,6 +160,27 @@ def main():
         error_msg = f"VLM 이미지 추출 실패: {e}"
         logger.error(error_msg, exc_info=True)
         raise VLMProcessingError(error_msg, details=str(e))
+    
+    # ============================================================
+    # 3.5. HTML 생성 (텍스트 추출 및 VLM 이미지 추출 완료 후)
+    # ============================================================
+    logger.info("\n" + "=" * 80)
+    logger.info("3.5단계: HTML 생성 (JSON → HTML 변환)")
+    logger.info("=" * 80)
+    
+    step3_5_start = time.time()
+    try:
+        html_count = generate_html_from_json_files(parsing_results_dir=parsing_results_dir)
+        step3_5_elapsed = time.time() - step3_5_start
+        logger.info(f"✅ HTML 생성 완료: {html_count}개 파일")
+        logger.info(f"  ⏱️  소요 시간: {timedelta(seconds=int(step3_5_elapsed))} ({step3_5_elapsed:.2f}초)")
+        logger.info(f"  HTML 저장 위치: {parsing_results_dir}")
+    except Exception as e:
+        step3_5_elapsed = time.time() - step3_5_start
+        error_msg = f"HTML 생성 실패: {e}"
+        logger.error(error_msg, exc_info=True)
+        # HTML 생성 실패는 치명적이지 않으므로 경고만 출력하고 계속 진행
+        logger.warning("HTML 생성 실패했지만 파이프라인은 계속 진행합니다.")
     
     # ============================================================
     # 4. VLM 처리
